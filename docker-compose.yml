@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: bidan_care_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: BiDaN_CaRe_RooT_2025!
+      MYSQL_DATABASE: bidan_care
+      MYSQL_USER: bidan_care_user
+      MYSQL_PASSWORD: BiDaN_CaRe_2025!@#
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./deployment/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - bidan_care_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Backend API
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: bidan_care_backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - DB_NAME=bidan_care
+      - DB_USERNAME=bidan_care_user
+      - DB_PASSWORD=BiDaN_CaRe_2025!@#
+      - DB_HOSTNAME=mysql
+      - BCRYPT_SECRET=BiDaN_CaRe_PrOd_SeCrEt_2025
+      - BCRYPT_SALT_ROUNDS=12
+      - JWT_SECRET=SuReHoMe_CaRe_JwT_SeCrEt_2025_VeRy_SeCuRe
+      - NODEMAILER_SENDER_EMAIL=noreply@surehomecare.id
+      - NODEMAILER_SENDER_PASSWORD=EMAIL_PASSWORD_HERE
+      - NODEMAILER_SENDER_HOST=mail.surehomecare.id
+    volumes:
+      - ./server/images:/app/images
+      - backend_logs:/app/logs
+    ports:
+      - "3002:3002"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - bidan_care_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/admin"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Admin
+  frontend:
+    build:
+      context: ./bidan_care_admin
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_BACKEND_BASE_URL=https://api.surehomecare.id
+    container_name: bidan_care_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - bidan_care_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: bidan_care_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./deployment/nginx/sites:/etc/nginx/sites-available
+      - ./deployment/ssl:/etc/nginx/ssl
+      - ./server/images:/var/www/images
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - bidan_care_network
+
+volumes:
+  mysql_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  bidan_care_network:
+    driver: bridge

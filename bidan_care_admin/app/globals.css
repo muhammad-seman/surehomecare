@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Lato';
+  src: url('./_fonts/LATO-REGULAR.TTF');
+  font-weight: normal;
+}
+@font-face {
+  font-family: 'Lato';
+  src: url('./_fonts/LATO-BOLD.TTF');
+  font-weight: bold;
+}
+@font-face {
+  font-family: 'Lato';
+  src: url('./_fonts/LATO-BLACK.TTF');
+  font-weight: 900;
+}
+
+:root {
+  --primary: #37174F;
+  --secondary: #F2D6F2;
+  --accent: #C71585;
+  --background: #FFF5EE;
+  --text-primary: black;
+}
+
+table.data th, table.data td {
+  padding: .75rem .5rem;
+}
+table.data th:first-child, table.data td:first-child {
+  text-align: center;
+}
+
+input, textarea, select {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background-color: color-mix(in srgb, white, var(--primary) 12%);
+  resize: none;
+}
+input::placeholder {
+  color: #0007;
+}

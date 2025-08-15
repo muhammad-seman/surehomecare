@@ -1,0 +1,143 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: |
+          server/package-lock.json
+          bidan_care_admin/package-lock.json
+
+    - name: Install server dependencies
+      run: |
+        cd server
+        npm ci --only=production
+
+    - name: Install admin dependencies
+      run: |
+        cd bidan_care_admin
+        npm ci
+
+    - name: Build admin frontend
+      run: |
+        cd bidan_care_admin
+        npm run build
+      env:
+        NEXT_PUBLIC_BACKEND_BASE_URL: "https://api.surehomecare.id"
+
+    - name: Deploy to VPS
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        script: |
+          # Set up variables
+          APP_DIR="/var/www/surehomecare"
+          BACKEND_DIR="$APP_DIR/backend"
+          FRONTEND_DIR="$APP_DIR/frontend"
+          BACKUP_DIR="/var/backups/surehomecare/$(date +%Y%m%d_%H%M%S)"
+          
+          # Create backup
+          echo "Creating backup..."
+          mkdir -p $BACKUP_DIR
+          if [ -d "$BACKEND_DIR" ]; then
+            cp -r $BACKEND_DIR $BACKUP_DIR/
+          fi
+          if [ -d "$FRONTEND_DIR" ]; then
+            cp -r $FRONTEND_DIR $BACKUP_DIR/
+          fi
+          
+          # Stop services
+          echo "Stopping services..."
+          pm2 stop bidan-care-backend || true
+          
+          # Create directories
+          mkdir -p $BACKEND_DIR
+          mkdir -p $FRONTEND_DIR
+          
+          # Update backend
+          echo "Updating backend..."
+          cd $BACKEND_DIR
+          
+          # Remove old files but keep node_modules, .env, and uploads
+          find . -maxdepth 1 -not -name 'node_modules' -not -name '.env' -not -name 'images' -not -name '.' -not -name '..' -exec rm -rf {} +
+          
+          # Clone and setup backend
+          git clone --depth 1 https://github.com/YOUR_USERNAME/YOUR_REPO.git temp_repo
+          cp -r temp_repo/server/* .
+          rm -rf temp_repo
+          
+          # Install dependencies if needed
+          if [ ! -d "node_modules" ]; then
+            npm ci --only=production
+          fi
+          
+          # Setup database if needed
+          if [ ! -f ".env" ]; then
+            echo "Setting up environment file..."
+            # The environment file should be manually placed on VPS
+          fi
+          
+          # Run database setup
+          npm install uuid
+          node setup-database.js
+          
+          # Update frontend
+          echo "Updating frontend..."
+          cd $FRONTEND_DIR
+          rm -rf *
+          cp -r temp_repo/bidan_care_admin/.next/standalone/* .
+          cp -r temp_repo/bidan_care_admin/.next/static .next/static
+          cp -r temp_repo/bidan_care_admin/public public
+          
+          # Set permissions
+          chown -R nginx:nginx $APP_DIR
+          
+          # Start services
+          echo "Starting services..."
+          cd $BACKEND_DIR
+          pm2 start ecosystem.config.js --env production
+          pm2 save
+          
+          # Restart Nginx
+          systemctl reload nginx
+          
+          echo "Deployment completed successfully!"
+
+    - name: Health Check
+      run: |
+        sleep 30
+        curl -f https://api.surehomecare.id/api/admin || exit 1
+        echo "Backend health check passed!"
+
+    - name: Cleanup on failure
+      if: failure()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        script: |
+          echo "Deployment failed, restoring from backup..."
+          LATEST_BACKUP=$(ls -t /var/backups/surehomecare/ | head -1)
+          if [ ! -z "$LATEST_BACKUP" ]; then
+            cp -r /var/backups/surehomecare/$LATEST_BACKUP/backend/* /var/www/surehomecare/backend/
+            cp -r /var/backups/surehomecare/$LATEST_BACKUP/frontend/* /var/www/surehomecare/frontend/
+            pm2 restart bidan-care-backend
+            echo "Restored from backup: $LATEST_BACKUP"
+          fi
